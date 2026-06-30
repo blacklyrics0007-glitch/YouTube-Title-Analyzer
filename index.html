@@ -87,6 +87,12 @@
           <button class="btn btn--copy" data-copy="hot">📋 Copy All</button>
         </div>
         <p class="panel-sub">Keywords that are strong right now — easy to grab while they're hot</p>
+        <div class="seg hot-filter" role="tablist" aria-label="Filter by length">
+          <button class="seg-btn is-active" data-hotfilter="all">All</button>
+          <button class="seg-btn" data-hotfilter="short">Short</button>
+          <button class="seg-btn" data-hotfilter="long">Long</button>
+          <button class="seg-btn" data-hotfilter="phrase">Phrases</button>
+        </div>
         <div id="hot-today" class="kw-list kw-list--wrap"><span class="kw-empty">Run an analysis to load hot keywords.</span></div>
       </div>
 
@@ -167,6 +173,11 @@
             <button class="seg-btn" data-range="6">6 Months</button>
             <button class="seg-btn" data-range="12">1 Year</button>
           </div>
+        </div>
+        <div class="seg vkind-filter" role="tablist" aria-label="Video type">
+          <button class="seg-btn is-active" data-vkind="all">All</button>
+          <button class="seg-btn" data-vkind="short">⚡ Shorts</button>
+          <button class="seg-btn" data-vkind="long">▶ Long-form</button>
         </div>
         <div id="videos" class="videos">
           <p class="empty-note">Add a YouTube API key and run an analysis to compare top-ranking videos.</p>

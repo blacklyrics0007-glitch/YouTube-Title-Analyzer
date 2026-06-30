@@ -70,6 +70,8 @@ const GAUGE_LEN = 2 * Math.PI * 52; // matches r=52 in svg
 
 // Last analysis state (used for copy + range switching).
 let state = { lowComp: [], trending: [], hot: [], all: [], hashtags: [], videos: [], liveVids: [], lastTitle: '', music: null };
+let hotFilter = 'all';   // Hot Today length filter: all|short|long|phrase
+let videoKind = 'all';   // Video Comparison type filter: all|short|long
 
 const MUSIC_TYPES = ['Official Audio', 'Lyric Video', 'Official Music Video', 'Visualizer', 'Official Video'];
 const MUSIC_GENRES = ['Rap', 'Hip Hop', 'Trap', 'Drill', 'Melodic Rap', 'Lofi', 'R&B', 'Chill', 'Pop', 'Afrobeat', 'EDM', 'Ballad', 'Sad Rap'];
@@ -99,8 +101,12 @@ function init() {
 
   document.querySelectorAll('[data-copy]').forEach((b) =>
     b.addEventListener('click', () => copyGroup(b.dataset.copy, b)));
-  document.querySelectorAll('.seg-btn').forEach((b) =>
+  document.querySelectorAll('[data-range]').forEach((b) =>
     b.addEventListener('click', () => switchRange(b)));
+  document.querySelectorAll('[data-vkind]').forEach((b) =>
+    b.addEventListener('click', () => switchVideoKind(b)));
+  document.querySelectorAll('[data-hotfilter]').forEach((b) =>
+    b.addEventListener('click', () => switchHotFilter(b)));
 
   updateCharCount();
   loadHotToday(); // populate "today" trending keywords immediately
@@ -456,9 +462,9 @@ async function onlineAnalysis(title, kw) {
     return;
   }
 
-  // 2) Full stats for those videos.
+  // 2) Full stats for those videos (incl. duration to detect Shorts).
   const details = await ytFetch('videos', {
-    key, part: 'snippet,statistics', id: ids.join(','),
+    key, part: 'snippet,statistics,contentDetails', id: ids.join(','),
   });
   const vids = (details.items || []).map(mapVideo);
   state.liveVids = vids; // used by withVolume() for live volume estimates
@@ -506,13 +512,27 @@ async function onlineAnalysis(title, kw) {
 }
 
 function mapVideo(v) {
-  const s = v.snippet || {}, st = v.statistics || {};
+  const s = v.snippet || {}, st = v.statistics || {}, cd = v.contentDetails || {};
+  const seconds = parseDuration(cd.duration);
+  const isShort = (seconds > 0 && seconds <= 60) || /#shorts?\b/i.test(s.title || '');
   return {
     id: v.id, title: s.title || '', channel: s.channelTitle || '',
     thumb: (s.thumbnails && (s.thumbnails.medium || s.thumbnails.default) || {}).url || '',
     published: s.publishedAt || '', views: +(st.viewCount || 0), likes: +(st.likeCount || 0),
-    comments: +(st.commentCount || 0),
+    comments: +(st.commentCount || 0), duration: seconds, isShort,
   };
+}
+
+// Parse ISO-8601 duration (e.g. "PT1M30S") into seconds.
+function parseDuration(iso) {
+  const m = /PT(?:(\d+)H)?(?:(\d+)M)?(?:(\d+)S)?/.exec(iso || '');
+  if (!m) return 0;
+  return (+m[1] || 0) * 3600 + (+m[2] || 0) * 60 + (+m[3] || 0);
+}
+function fmtDur(s) {
+  if (!s) return '';
+  const m = Math.floor(s / 60), sec = s % 60;
+  return m + ':' + String(sec).padStart(2, '0');
 }
 
 async function ytFetch(endpoint, params) {
@@ -632,9 +652,18 @@ function renderKeywordList(id, list, plain) {
 }
 function renderHotToday(items) {
   const node = $('hot-today');
-  if (!items.length) { node.innerHTML = '<span class="kw-empty">No hot keywords found.</span>'; return; }
-  node.innerHTML = sortOpportunity(items).map(chip).join('');
+  const list = sortOpportunity(filterByLen(items, hotFilter));
+  if (!list.length) { node.innerHTML = '<span class="kw-empty">No keywords in this filter.</span>'; return; }
+  node.innerHTML = list.map(chip).join('');
   bindChips(node);
+}
+// Filter keyword items by word count: short=1, long=2, phrase=3+.
+function filterByLen(items, f) {
+  if (!f || f === 'all') return items;
+  return items.filter((it) => {
+    const n = it.kw.trim().split(/\s+/).length;
+    return f === 'short' ? n === 1 : f === 'long' ? n === 2 : n >= 3;
+  });
 }
 function bindChips(node) {
   node.querySelectorAll('.chip').forEach((c) =>
@@ -658,11 +687,20 @@ function renderInsights(checks) {
 
 function renderVideos(rangeMonths) {
   const cutoff = Date.now() - rangeMonths * 30 * 24 * 3600 * 1000;
-  const list = state.videos.filter((v) => !v.published || new Date(v.published).getTime() >= cutoff);
-  if (!list.length) { renderVideosEmpty(`No ranking videos published in the last ${rangeMonths} months.`); return; }
+  let list = state.videos.filter((v) => !v.published || new Date(v.published).getTime() >= cutoff);
+  if (videoKind === 'short') list = list.filter((v) => v.isShort);
+  else if (videoKind === 'long') list = list.filter((v) => !v.isShort);
+  if (!list.length) {
+    const what = videoKind === 'short' ? 'Shorts' : videoKind === 'long' ? 'long-form videos' : 'ranking videos';
+    renderVideosEmpty(`No ${what} found in the last ${rangeMonths} months.`);
+    return;
+  }
   el.videos.innerHTML = list.slice(0, 10).map((v, i) => `
     <a class="video-card" href="https://youtu.be/${v.id}" target="_blank" rel="noopener">
-      <img class="video-thumb" src="${v.thumb}" alt="" loading="lazy" />
+      <div class="thumb-wrap">
+        <img class="video-thumb" src="${v.thumb}" alt="" loading="lazy" />
+        ${v.isShort ? '<span class="short-tag">⚡ SHORT</span>' : (v.duration ? `<span class="dur-tag">${fmtDur(v.duration)}</span>` : '')}
+      </div>
       <div class="video-info">
         <span class="video-title">${escapeHtml(v.title)}</span>
         <span class="video-channel">${escapeHtml(v.channel)}</span>
@@ -682,13 +720,25 @@ function renderVideosEmpty(msg) { el.videos.innerHTML = `<p class="empty-note">$
    10. RANGE SWITCHING
    ============================================================ */
 function getActiveRange() {
-  const active = document.querySelector('.seg-btn.is-active');
+  const active = document.querySelector('[data-range].is-active');
   return active ? +active.dataset.range : 3;
 }
 function switchRange(btn) {
-  document.querySelectorAll('.seg-btn').forEach((b) => b.classList.remove('is-active'));
+  document.querySelectorAll('[data-range]').forEach((b) => b.classList.remove('is-active'));
   btn.classList.add('is-active');
-  if (state.videos.length) renderVideos(+btn.dataset.range);
+  if (state.videos.length) renderVideos(getActiveRange());
+}
+function switchVideoKind(btn) {
+  document.querySelectorAll('[data-vkind]').forEach((b) => b.classList.remove('is-active'));
+  btn.classList.add('is-active');
+  videoKind = btn.dataset.vkind;
+  if (state.videos.length) renderVideos(getActiveRange());
+}
+function switchHotFilter(btn) {
+  document.querySelectorAll('[data-hotfilter]').forEach((b) => b.classList.remove('is-active'));
+  btn.classList.add('is-active');
+  hotFilter = btn.dataset.hotfilter;
+  renderHotToday(state.hot);
 }
 
 /* ============================================================
@@ -698,7 +748,7 @@ function copyGroup(group, btn) {
   let text = '';
   if (group === 'lowComp') text = state.lowComp.map((x) => x.kw).join('\n');
   else if (group === 'trending') text = state.trending.map((x) => x.kw).join('\n');
-  else if (group === 'hot') text = state.hot.map((x) => x.kw).join('\n');
+  else if (group === 'hot') text = filterByLen(state.hot, hotFilter).map((x) => x.kw).join('\n');
   else if (group === 'all') text = state.all.join('\n');
   else if (group === 'hashtags') text = state.hashtags.join(' ');
   if (!text) { toast('Nothing to copy yet'); return; }
