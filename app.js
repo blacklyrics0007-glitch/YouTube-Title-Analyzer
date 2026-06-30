@@ -29,7 +29,13 @@ const STOPWORDS = new Set(('a an and the to of for in on at by with from into ov
 const HIGH_VOL_WORDS = /\b(how to|best|top|tutorial|review|tips|guide|vs|free|easy|2026|2025|new|full|trick|hack|ai)\b/i;
 
 // Currently hot / trending modifiers used for the offline "Hot Today" fallback.
-const HOT_NOW = ['2026', 'ai', 'shorts', 'viral', 'challenge', 'reaction', 'tutorial', 'review', 'tips', 'how to', 'trends'];
+const HOT_NOW = ['2026', 'ai', 'shorts', 'viral', 'challenge', 'reaction', 'tutorial', 'review', 'tips', 'how to', 'trends', 'explained', 'guide', 'compilation', 'live'];
+
+// Broad popular YouTube search themes for the offline (no-key) Hot Today list.
+const GENERIC_HOT = ['ai tools', 'how to go viral', 'youtube shorts', 'make money online',
+  '2026 trends', 'chatgpt tutorial', 'for beginners', 'reaction video', 'asmr', 'gaming highlights',
+  'workout at home', 'study with me', 'day in my life', 'product review', 'top 10', 'life hacks',
+  'tier list', 'speedrun', 'podcast clips', 'minecraft', 'street food', 'travel vlog'];
 
 // Ordering maps for opportunity sorting.
 const COMP_ORD = { low: 1, med: 2, high: 3 };
@@ -76,7 +82,7 @@ function init() {
   // Events
   el.saveKey.addEventListener('click', saveKey);
   el.toggleKey.addEventListener('click', toggleKeyVisibility);
-  el.country.addEventListener('change', () => localStorage.setItem(LS_COUNTRY, el.country.value));
+  el.country.addEventListener('change', () => { localStorage.setItem(LS_COUNTRY, el.country.value); loadHotToday(); });
   el.analyzeBtn.addEventListener('click', runAnalysis);
   el.titleInput.addEventListener('input', updateCharCount);
   el.titleInput.addEventListener('keydown', (e) => { if (e.key === 'Enter') runAnalysis(); });
@@ -88,6 +94,7 @@ function init() {
     b.addEventListener('click', () => switchRange(b)));
 
   updateCharCount();
+  loadHotToday(); // populate "today" trending keywords immediately
 }
 
 /* ============================================================
@@ -105,11 +112,12 @@ function refreshStatus() { setStatus(hasKey() && !!localStorage.getItem(LS_KEY))
 
 function saveKey() {
   const key = el.apiKey.value.trim();
-  if (!key) { localStorage.removeItem(LS_KEY); setStatus(false); showAlert('Key cleared — running in local mode.', 'info'); return; }
+  if (!key) { localStorage.removeItem(LS_KEY); setStatus(false); showAlert('Key cleared — running in local mode.', 'info'); loadHotToday(); return; }
   localStorage.setItem(LS_KEY, key);
   setStatus(true);
   showAlert('API key saved. Live competition & video data unlocked.', 'ok');
   toast('Key saved');
+  loadHotToday(); // refresh with real trending-now data
 }
 function toggleKeyVisibility() {
   const show = el.apiKey.type === 'password';
@@ -410,29 +418,44 @@ function topFreq(arr, n) {
 }
 
 /* ---------------- Hot Today (trending now) ---------------- */
-// Offline fallback: blend the title's seed keywords with currently-hot modifiers.
+// Offline fallback: blend the title's seed keywords with currently-hot modifiers + broad trends.
 function localHotToday(seedKeys) {
   const out = [];
-  seedKeys.slice(0, 3).forEach((s) => HOT_NOW.slice(0, 6).forEach((m) =>
+  (seedKeys || []).slice(0, 4).forEach((s) => HOT_NOW.forEach((m) =>
     out.push(m === 'how to' ? `how to ${s}` : `${s} ${m}`)));
+  GENERIC_HOT.forEach((g) => out.push(g));
   HOT_NOW.forEach((m) => out.push(m));
-  return [...new Set(out)].slice(0, 15).map((k) => ({
-    kw: k, comp: k.split(' ').length >= 2 ? 'med' : 'high', vol: localVolume(k),
+  return [...new Set(out)].map((k) => ({
+    kw: k, comp: k.split(' ').length >= 3 ? 'low' : k.split(' ').length === 2 ? 'med' : 'high', vol: localVolume(k),
   }));
 }
-// Live: pull the country's most-popular videos right now and mine their titles.
+// Live: pull the country's most-popular videos right now and mine ALL their title keywords.
 async function fetchHotToday(key, region) {
   const pop = await ytFetch('videos', {
-    key, part: 'snippet', chart: 'mostPopular', regionCode: region, maxResults: 40,
+    key, part: 'snippet', chart: 'mostPopular', regionCode: region, maxResults: 50,
   });
   const titles = (pop.items || []).map((i) => i.snippet.title);
   const words = meaningful(tokenize(titles.join(' . ')));
-  const uni = topFreq(words, 9);
-  const bi = topFreq(ngrams(words, 2), 6);
+  const uni = topFreq(words, 16);
+  const bi = topFreq(ngrams(words, 2), 12);
+  const tri = topFreq(ngrams(words, 3), 6);
   return [
     ...uni.map((k) => ({ kw: k, comp: 'high', vol: 'high' })),
     ...bi.map((k) => ({ kw: k, comp: 'med', vol: 'high' })),
+    ...tri.map((k) => ({ kw: k, comp: 'low', vol: 'med' })),
   ];
+}
+// Load Hot Today independently of the title (it's "today" data for the chosen country).
+async function loadHotToday() {
+  const node = $('hot-today');
+  if (hasKey()) {
+    node.innerHTML = '<span class="kw-empty">Loading hot keywords…</span>';
+    try { state.hot = await fetchHotToday(el.apiKey.value.trim(), el.country.value); }
+    catch (e) { state.hot = localHotToday([]); }
+  } else {
+    state.hot = localHotToday([]);
+  }
+  renderHotToday(state.hot);
 }
 
 /* ============================================================
