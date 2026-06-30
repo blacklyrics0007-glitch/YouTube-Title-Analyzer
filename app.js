@@ -60,11 +60,20 @@ const el = {
   titleInput: $('titleInput'), charCount: $('charCount'), analyzeBtn: $('analyzeBtn'), alert: $('alert'),
   gaugeArc: $('gaugeArc'), scoreValue: $('scoreValue'), scoreLabel: $('scoreLabel'),
   insights: $('insights'), hashtags: $('hashtags'), videos: $('videos'), toast: $('toast'),
+  // music mode
+  modeVideo: $('modeVideo'), modeMusic: $('modeMusic'), videoSection: $('videoSection'), musicSection: $('musicSection'),
+  mSong: $('mSong'), mArtist: $('mArtist'), mType: $('mType'), mGenre: $('mGenre'), mMood: $('mMood'),
+  mGenerate: $('mGenerate'), mTitles: $('mTitles'), mTags: $('mTags'), mDesc: $('mDesc'), mHashtags: $('mHashtags'),
+  mTagsCopy: $('mTagsCopy'), mDescCopy: $('mDescCopy'), mHashCopy: $('mHashCopy'),
 };
 const GAUGE_LEN = 2 * Math.PI * 52; // matches r=52 in svg
 
 // Last analysis state (used for copy + range switching).
-let state = { lowComp: [], trending: [], hot: [], all: [], hashtags: [], videos: [], liveVids: [], lastTitle: '' };
+let state = { lowComp: [], trending: [], hot: [], all: [], hashtags: [], videos: [], liveVids: [], lastTitle: '', music: null };
+
+const MUSIC_TYPES = ['Official Audio', 'Lyric Video', 'Official Music Video', 'Visualizer', 'Official Video'];
+const MUSIC_GENRES = ['Rap', 'Hip Hop', 'Trap', 'Drill', 'Melodic Rap', 'Lofi', 'R&B', 'Chill', 'Pop', 'Afrobeat', 'EDM', 'Ballad', 'Sad Rap'];
+const MUSIC_MOODS = ['Sad', 'Emotional', 'Chill', 'Relaxing', 'Motivational', 'Romantic', 'Dark', 'Energetic', 'Late Night', 'Hopeful', 'Heartbreak'];
 
 /* ============================================================
    1. INITIALISATION
@@ -95,6 +104,117 @@ function init() {
 
   updateCharCount();
   loadHotToday(); // populate "today" trending keywords immediately
+  initMusicMode();
+}
+
+/* ============================================================
+   MUSIC MODE — metadata generator for songs (Elio Zen)
+   ============================================================ */
+function initMusicMode() {
+  el.mType.innerHTML = MUSIC_TYPES.map((t) => `<option>${t}</option>`).join('');
+  el.mGenre.innerHTML = MUSIC_GENRES.map((g) => `<option>${g}</option>`).join('');
+  el.mMood.innerHTML = MUSIC_MOODS.map((m) => `<option>${m}</option>`).join('');
+
+  el.modeVideo.addEventListener('click', () => switchMode('video'));
+  el.modeMusic.addEventListener('click', () => switchMode('music'));
+  el.mGenerate.addEventListener('click', generateMusic);
+  el.mSong.addEventListener('keydown', (e) => { if (e.key === 'Enter') generateMusic(); });
+
+  el.mTagsCopy.addEventListener('click', () => { if (state.music) { copyText(state.music.tags.join(', ')); flashCopy(el.mTagsCopy); } });
+  el.mDescCopy.addEventListener('click', () => { if (state.music) { copyText(state.music.desc); flashCopy(el.mDescCopy); } });
+  el.mHashCopy.addEventListener('click', () => { if (state.music) { copyText(state.music.hashtags.join(' ')); flashCopy(el.mHashCopy); } });
+}
+
+function switchMode(mode) {
+  const music = mode === 'music';
+  el.modeMusic.classList.toggle('is-active', music);
+  el.modeVideo.classList.toggle('is-active', !music);
+  el.musicSection.hidden = !music;
+  el.videoSection.hidden = music;
+  window.scrollTo({ top: 0, behavior: 'smooth' });
+}
+
+function generateMusic() {
+  const song = el.mSong.value.trim();
+  if (!song) { toast('Enter a song name'); el.mSong.focus(); return; }
+  const artist = el.mArtist.value.trim() || 'Elio Zen';
+  const type = el.mType.value;
+  const genre = el.mGenre.value;
+  const mood = el.mMood.value;
+
+  // Title options (front-loaded song name + genre/mood hooks)
+  const titles = [
+    `${song} - ${artist} (${type})`,
+    `${song} - ${artist} | ${genre} [${type}]`,
+    `${artist} - ${song} (${mood} ${genre})`,
+    `${song} - ${artist} | ${mood} ${genre} ${type} 2026`,
+  ];
+
+  // Tags — artist, song, genre, mood combinations
+  const tags = [...new Set([
+    artist, `${artist} song`, `${artist} ${song}`, song, `${song} lyrics`, `${song} ${artist}`,
+    genre, `${genre} song`, `${mood} ${genre}`, `${mood} music`, `${mood} song`,
+    type.toLowerCase(), `new ${genre} 2026`, `${artist} ${genre}`, `${genre} 2026`,
+  ].map((t) => t.toLowerCase().trim()).filter(Boolean))].slice(0, 14);
+
+  // Hashtags
+  const hashtags = hashtagify([artist, genre, song, `${mood} music`, 'new music', '2026']);
+
+  // Description template
+  const desc =
+`${song} by ${artist} 🎧
+
+🎵 Genre: ${genre}
+🎭 Mood: ${mood}
+
+[ Add your lyrics here ]
+
+📲 Follow ${artist}:
+Instagram: 
+TikTok: 
+Spotify: 
+Apple Music: 
+
+🎧 Stream "${song}" everywhere now.
+
+${hashtags.join(' ')}`;
+
+  state.music = { titles, tags, desc, hashtags };
+  renderMusic();
+  toast('Metadata generated');
+}
+
+function hashtagify(arr) {
+  return [...new Set(arr.map((s) => '#' + titleCase(String(s)).replace(/[^a-zA-Z0-9]/g, '')))].filter((t) => t.length > 1);
+}
+
+function renderMusic() {
+  const m = state.music;
+  el.mTitles.innerHTML = m.titles.map((t) => {
+    const len = t.length;
+    const cls = len > 70 ? 'bad' : len > 60 ? 'warn' : '';
+    return `<div class="m-title-row">
+      <span class="t-text">${escapeHtml(t)}</span>
+      <span class="t-len ${cls}">${len}</span>
+      <button class="m-copy-btn" data-t="${escapeHtml(t)}">Copy</button>
+    </div>`;
+  }).join('');
+  el.mTitles.querySelectorAll('.m-copy-btn').forEach((b) =>
+    b.addEventListener('click', () => { copyText(b.dataset.t); toast('Title copied'); }));
+
+  el.mTags.textContent = m.tags.join(', ');
+  el.mDesc.textContent = m.desc;
+  el.mHashtags.innerHTML = m.hashtags.map((h) =>
+    `<span class="hashtag" data-kw="${escapeHtml(h)}">${escapeHtml(h)}</span>`).join('');
+  el.mHashtags.querySelectorAll('.hashtag').forEach((h) =>
+    h.addEventListener('click', () => { copyText(h.dataset.kw); toast('Copied ' + h.dataset.kw); }));
+}
+
+function flashCopy(btn) {
+  btn.classList.add('copied');
+  const orig = btn.textContent;
+  btn.textContent = '✓ Copied';
+  setTimeout(() => { btn.classList.remove('copied'); btn.textContent = orig; }, 1300);
 }
 
 /* ============================================================

@@ -20,6 +20,12 @@
       <p class="app-subtitle">Competitor Analysis · Low Competition Keywords · Video Comparison</p>
     </header>
 
+    <!-- ===== Mode Switch ===== -->
+    <div class="mode-switch">
+      <button id="modeVideo" class="mode-tab is-active" type="button">🎬 Video SEO</button>
+      <button id="modeMusic" class="mode-tab" type="button">🎵 Music (Elio Zen)</button>
+    </div>
+
     <!-- ===== Card: API Configuration ===== -->
     <section class="card" aria-label="API configuration">
       <div class="api-row">
@@ -50,7 +56,7 @@
     </section>
 
     <!-- ===== Card: Analyzer ===== -->
-    <section class="card" aria-label="Title analyzer">
+    <section id="videoSection" class="card" aria-label="Title analyzer">
       <span id="modeBadge" class="mode-badge">● LOCAL ANALYSIS</span>
 
       <div class="analyze-row">
@@ -165,6 +171,74 @@
         <div id="videos" class="videos">
           <p class="empty-note">Add a YouTube API key and run an analysis to compare top-ranking videos.</p>
         </div>
+      </div>
+    </section>
+
+    <!-- ===== Card: Music Mode ===== -->
+    <section id="musicSection" class="card" aria-label="Music metadata generator" hidden>
+      <span class="mode-badge is-live">🎵 MUSIC MODE · ELIO ZEN</span>
+
+      <div class="music-form">
+        <div class="m-field">
+          <label class="field-label" for="mSong"><span class="ic">🎵</span> Song Name</label>
+          <input id="mSong" class="input" type="text" placeholder="e.g. Peace After Pain" />
+        </div>
+        <div class="m-row">
+          <div class="m-field">
+            <label class="field-label" for="mArtist">Artist</label>
+            <input id="mArtist" class="input" type="text" value="Elio Zen" />
+          </div>
+          <div class="m-field">
+            <label class="field-label" for="mType">Video Type</label>
+            <select id="mType" class="input select"></select>
+          </div>
+        </div>
+        <div class="m-row">
+          <div class="m-field">
+            <label class="field-label" for="mGenre">Genre</label>
+            <select id="mGenre" class="input select"></select>
+          </div>
+          <div class="m-field">
+            <label class="field-label" for="mMood">Mood</label>
+            <select id="mMood" class="input select"></select>
+          </div>
+        </div>
+        <button id="mGenerate" class="btn btn--green btn--analyze" type="button">✨ GENERATE METADATA</button>
+      </div>
+
+      <!-- Titles -->
+      <div class="panel">
+        <div class="panel-head">
+          <span class="panel-title"><span class="ic">📝</span> TITLE OPTIONS</span>
+        </div>
+        <div id="mTitles" class="m-titles"><p class="empty-note">Fill the form and generate to get optimized titles.</p></div>
+      </div>
+
+      <!-- Tags -->
+      <div class="panel">
+        <div class="panel-head">
+          <span class="panel-title"><span class="ic">🏷️</span> TAGS</span>
+          <button id="mTagsCopy" class="btn btn--copy" type="button">📋 Copy All</button>
+        </div>
+        <div id="mTags" class="tagbox"><span class="kw-empty">—</span></div>
+      </div>
+
+      <!-- Description -->
+      <div class="panel">
+        <div class="panel-head">
+          <span class="panel-title"><span class="ic">📄</span> DESCRIPTION</span>
+          <button id="mDescCopy" class="btn btn--copy" type="button">📋 Copy</button>
+        </div>
+        <pre id="mDesc" class="descbox">—</pre>
+      </div>
+
+      <!-- Hashtags -->
+      <div class="panel">
+        <div class="panel-head">
+          <span class="panel-title"><span class="ic">#️⃣</span> HASHTAGS</span>
+          <button id="mHashCopy" class="btn btn--copy" type="button">📋 Copy</button>
+        </div>
+        <div id="mHashtags" class="hashtags"><span class="kw-empty">—</span></div>
       </div>
     </section>
 
