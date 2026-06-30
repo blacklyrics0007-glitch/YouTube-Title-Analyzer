@@ -25,6 +25,16 @@ const STOPWORDS = new Set(('a an and the to of for in on at by with from into ov
   'we our us it its as or but if then so than too very can will just about out up down off it\'s ' +
   'vs &').split(/\s+/));
 
+// High-volume signal words: keywords containing these tend to get more searches.
+const HIGH_VOL_WORDS = /\b(how to|best|top|tutorial|review|tips|guide|vs|free|easy|2026|2025|new|full|trick|hack|ai)\b/i;
+
+// Currently hot / trending modifiers used for the offline "Hot Today" fallback.
+const HOT_NOW = ['2026', 'ai', 'shorts', 'viral', 'challenge', 'reaction', 'tutorial', 'review', 'tips', 'how to', 'trends'];
+
+// Ordering maps for opportunity sorting.
+const COMP_ORD = { low: 1, med: 2, high: 3 };
+const VOL_ORD = { low: 1, med: 2, high: 3 };
+
 // Words that add emotional / power pull to a title (psychology layer).
 const POWER_WORDS = new Set(('secret proven ultimate instantly free easy fast best worst stop avoid ' +
   'mistake hack truth never always exposed shocking insane crazy genius simple powerful brutal ' +
@@ -48,7 +58,7 @@ const el = {
 const GAUGE_LEN = 2 * Math.PI * 52; // matches r=52 in svg
 
 // Last analysis state (used for copy + range switching).
-let state = { lowComp: [], trending: [], all: [], hashtags: [], videos: [], lastTitle: '' };
+let state = { lowComp: [], trending: [], hot: [], all: [], hashtags: [], videos: [], liveVids: [], lastTitle: '' };
 
 /* ============================================================
    1. INITIALISATION
@@ -138,6 +148,37 @@ function freqMap(arr) {
 }
 
 function titleCase(s) { return s.replace(/\b\w/g, (c) => c.toUpperCase()); }
+
+/* ---------------- Volume + opportunity sorting ---------------- */
+// Estimate relative search volume offline (shorter & common-modifier terms = higher).
+function localVolume(kw) {
+  const n = kw.trim().split(/\s+/).length;
+  let v = n === 1 ? 3 : n === 2 ? 2 : 1;        // specificity lowers volume
+  if (HIGH_VOL_WORDS.test(kw)) v = Math.min(3, v + 1);
+  return v >= 3 ? 'high' : v === 2 ? 'med' : 'low';
+}
+// Estimate volume from live competitor data (total views + how many top videos use it).
+function liveVolume(kw, videos) {
+  const words = kw.toLowerCase().split(/\s+/);
+  let views = 0, hits = 0;
+  videos.forEach((v) => {
+    const t = (v.title || '').toLowerCase();
+    if (words.every((w) => t.includes(w))) { views += v.views; hits++; }
+  });
+  if (!hits) return localVolume(kw);
+  if (views >= 5e6 || hits >= 5) return 'high';
+  if (views >= 4e5 || hits >= 2) return 'med';
+  return 'low';
+}
+// Attach a volume estimate to a list of keyword items.
+function withVolume(items, videos) {
+  return items.map((it) => ({ ...it, vol: it.vol || (videos && videos.length ? liveVolume(it.kw, videos) : localVolume(it.kw)) }));
+}
+// Sort: easiest to rank first (low competition), then highest volume first.
+function sortOpportunity(items) {
+  return items.slice().sort((a, b) =>
+    (COMP_ORD[a.comp] - COMP_ORD[b.comp]) || (VOL_ORD[b.vol || 'med'] - VOL_ORD[a.vol || 'med']));
+}
 
 /* ============================================================
    5. SEO SCORING ENGINE  (deterministic, explainable)
@@ -236,12 +277,16 @@ async function runAnalysis() {
 
   if (!online) {
     // Offline: derive low-comp from synthesized long-tails, trending from title keys.
+    state.liveVids = [];
+    const kwShort = meaningful(tokenize(title));
     state.lowComp = classifyLocal(kw.synth.length ? kw.synth : kw.all);
     state.trending = classifyLocal(kw.all, 'med');
+    state.hot = localHotToday(kwShort);
     renderKeywordColumns('lc', state.lowComp);
     renderKeywordColumns('tr', state.trending);
+    renderHotToday(state.hot);
     renderVideosEmpty('Add a YouTube API key (top of page) to load live competitor videos.');
-    showAlert('Local analysis complete. Add an API key for live competition data.', 'info');
+    showAlert('Local analysis complete. Add an API key for live competition & hot trending data.', 'info');
     return;
   }
 
@@ -252,10 +297,13 @@ async function runAnalysis() {
   } catch (err) {
     console.error(err);
     showAlert('API error: ' + err.message + ' — showing local results.', 'err');
+    state.liveVids = [];
     state.lowComp = classifyLocal(kw.synth.length ? kw.synth : kw.all);
     state.trending = classifyLocal(kw.all, 'med');
+    state.hot = localHotToday(meaningful(tokenize(title)));
     renderKeywordColumns('lc', state.lowComp);
     renderKeywordColumns('tr', state.trending);
+    renderHotToday(state.hot);
     renderVideosEmpty('Could not reach the YouTube API. Check your key & quota.');
   } finally {
     setLoading(false);
@@ -285,6 +333,7 @@ async function onlineAnalysis(title, kw) {
     key, part: 'snippet,statistics', id: ids.join(','),
   });
   const vids = (details.items || []).map(mapVideo);
+  state.liveVids = vids; // used by withVolume() for live volume estimates
 
   // 3) Trending keywords = most frequent n-grams across competitor titles.
   const corpus = vids.map((v) => v.title).join(' . ');
@@ -312,7 +361,15 @@ async function onlineAnalysis(title, kw) {
   if (state.lowComp.length < 6) state.lowComp = scored.slice(0, 12);
   renderKeywordColumns('lc', state.lowComp);
 
-  // 5) Store videos for comparison view (sorted by views).
+  // 5) Hot Today = keywords mined from the country's most-popular videos right now.
+  try {
+    state.hot = await fetchHotToday(key, region);
+  } catch (e) {
+    state.hot = localHotToday(meaningful(tokenize(title)));
+  }
+  renderHotToday(state.hot);
+
+  // 6) Store videos for comparison view (sorted by views).
   vids.sort((a, b) => b.views - a.views);
   state.videos = vids;
   renderVideos(getActiveRange());
@@ -343,13 +400,39 @@ async function ytFetch(endpoint, params) {
 
 /* ---------------- Classify helpers (offline) ---------------- */
 function classifyLocal(list, force) {
-  return [...new Set(list)].slice(0, 18).map((k, i) => ({
-    kw: k,
-    comp: force || (k.split(' ').length >= 3 ? 'low' : k.split(' ').length === 2 ? 'med' : 'high'),
-  }));
+  return [...new Set(list)].slice(0, 18).map((k) => {
+    const comp = force || (k.split(' ').length >= 3 ? 'low' : k.split(' ').length === 2 ? 'med' : 'high');
+    return { kw: k, comp, vol: localVolume(k) };
+  });
 }
 function topFreq(arr, n) {
   return [...freqMap(arr).entries()].sort((a, b) => b[1] - a[1]).slice(0, n).map((e) => e[0]);
+}
+
+/* ---------------- Hot Today (trending now) ---------------- */
+// Offline fallback: blend the title's seed keywords with currently-hot modifiers.
+function localHotToday(seedKeys) {
+  const out = [];
+  seedKeys.slice(0, 3).forEach((s) => HOT_NOW.slice(0, 6).forEach((m) =>
+    out.push(m === 'how to' ? `how to ${s}` : `${s} ${m}`)));
+  HOT_NOW.forEach((m) => out.push(m));
+  return [...new Set(out)].slice(0, 15).map((k) => ({
+    kw: k, comp: k.split(' ').length >= 2 ? 'med' : 'high', vol: localVolume(k),
+  }));
+}
+// Live: pull the country's most-popular videos right now and mine their titles.
+async function fetchHotToday(key, region) {
+  const pop = await ytFetch('videos', {
+    key, part: 'snippet', chart: 'mostPopular', regionCode: region, maxResults: 40,
+  });
+  const titles = (pop.items || []).map((i) => i.snippet.title);
+  const words = meaningful(tokenize(titles.join(' . ')));
+  const uni = topFreq(words, 9);
+  const bi = topFreq(ngrams(words, 2), 6);
+  return [
+    ...uni.map((k) => ({ kw: k, comp: 'high', vol: 'high' })),
+    ...bi.map((k) => ({ kw: k, comp: 'med', vol: 'high' })),
+  ];
 }
 
 /* ============================================================
@@ -366,14 +449,19 @@ function buildHashtags(kw) {
    ============================================================ */
 function chip(item) {
   const comp = item.comp || 'med';
-  const label = { low: 'LOW', med: 'MED', high: 'HIGH' }[comp];
-  return `<button class="chip" data-kw="${escapeHtml(item.kw)}" title="Click to copy">
+  const vol = item.vol || 'med';
+  const lbl = { low: 'LOW', med: 'MED', high: 'HIGH' };
+  return `<button class="chip" data-kw="${escapeHtml(item.kw)}" title="Click to copy · 📊 volume / ⚔ competition">
       <span class="kw-text">${escapeHtml(item.kw)}</span>
-      <span class="badge badge--${comp}">${label}</span>
+      <span class="chip-meta">
+        <span class="badge badge-vol badge-vol--${vol}" title="Search volume (est.)">📊 ${lbl[vol]}</span>
+        <span class="badge badge--${comp}" title="Competition">⚔ ${lbl[comp]}</span>
+      </span>
     </button>`;
 }
 
 function renderKeywordColumns(prefix, items) {
+  items = withVolume(items, state.liveVids);
   const byLen = { short: [], long: [], phrase: [] };
   items.forEach((it) => {
     const n = it.kw.trim().split(/\s+/).length;
@@ -381,9 +469,9 @@ function renderKeywordColumns(prefix, items) {
     else if (n === 2) byLen.long.push(it);
     else byLen.phrase.push(it);
   });
-  fillCol(`${prefix}-short`, byLen.short);
-  fillCol(`${prefix}-long`, byLen.long);
-  fillCol(`${prefix}-phrase`, byLen.phrase);
+  fillCol(`${prefix}-short`, sortOpportunity(byLen.short));
+  fillCol(`${prefix}-long`, sortOpportunity(byLen.long));
+  fillCol(`${prefix}-phrase`, sortOpportunity(byLen.phrase));
 }
 function fillCol(id, items) {
   const node = $(id);
@@ -393,7 +481,16 @@ function fillCol(id, items) {
 function renderKeywordList(id, list, plain) {
   const node = $(id);
   if (!list.length) { node.innerHTML = '<span class="kw-empty">No keywords yet.</span>'; return; }
-  node.innerHTML = list.map((k) => chip({ kw: k, comp: plain ? 'med' : 'low' })).join('');
+  const items = sortOpportunity(withVolume(list.map((k) => ({
+    kw: k, comp: k.split(' ').length >= 3 ? 'low' : k.split(' ').length === 2 ? 'med' : 'high',
+  })), state.liveVids));
+  node.innerHTML = items.map(chip).join('');
+  bindChips(node);
+}
+function renderHotToday(items) {
+  const node = $('hot-today');
+  if (!items.length) { node.innerHTML = '<span class="kw-empty">No hot keywords found.</span>'; return; }
+  node.innerHTML = sortOpportunity(items).map(chip).join('');
   bindChips(node);
 }
 function bindChips(node) {
@@ -458,6 +555,7 @@ function copyGroup(group, btn) {
   let text = '';
   if (group === 'lowComp') text = state.lowComp.map((x) => x.kw).join('\n');
   else if (group === 'trending') text = state.trending.map((x) => x.kw).join('\n');
+  else if (group === 'hot') text = state.hot.map((x) => x.kw).join('\n');
   else if (group === 'all') text = state.all.join('\n');
   else if (group === 'hashtags') text = state.hashtags.join(' ');
   if (!text) { toast('Nothing to copy yet'); return; }
